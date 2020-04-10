@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Swoole聊天室</title>
+    <meta name="author" content="Veris">
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: "Microsoft Sans Serif";
+            font-size: 14px;
+        }
+
+        ul, li {
+            padding: 0;
+            margin: 0;
+            list-style: none;
+        }
+
+        .g-msgbox {
+            position: absolute;
+            left: 0;
+            right: 20%;
+            top: 0;
+            bottom: 20%;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow: hidden;
+            overflow-y: auto;
+        }
+
+        .g-online {
+            position: absolute;
+            right: 0;
+            left: 80%;
+            top: 0;
+            bottom: 20%;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow: hidden;
+            overflow-y: auto;
+        }
+
+        .g-replybox {
+            position: absolute;
+            right: 0;
+            left: 0;
+            top: 80%;
+            bottom: 0;
+            border: 1px solid #ddd;
+            padding: 10px;
+            outline: none;
+            letter-spacing: 0em;
+            overflow: hidden;
+            overflow-y: auto;
+        }
+
+        .g-online .z-online {
+            background-color: green;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .g-online .z-offline {
+            background-color: gray;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .g-msgbox li {
+            display: block;
+            clear: both;
+            margin-bottom: 0px;
+            min-height: 24px;
+            line-height: 24px;
+        }
+
+        .g-msgbox .type-tips {
+            text-align: center;
+        }
+
+        .g-msgbox .type-tips span {
+            color: #fff;
+            background-color: #888;
+            text-align: center;
+            margin: 0 auto;
+            border-radius: 10px;
+            padding: 2px 10px;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+<div class="g-msgbox">
+    <ul>
+    </ul>
+</div>
+<div class="g-online">
+    <ul>
+    </ul>
+</div>
+<div class="g-replybox" contenteditable="true">
+
+</div>
+<script src="https://cdn.bootcss.com/jquery/3.4.1/jquery.min.js"></script>
+<script>
+    var MostclanChat = function () {
+        this.msgboxDOM = $('.g-msgbox ul');
+        this.onlineboxDom = $('.g-online ul');
+        this.replyboxDOM = $('.g-replybox');
+        this.session;
+        this.ws;
+
+        this.init = function () {
+            _this = this;
+            _this.ws = new WebSocket('ws://127.0.0.1:5628');
+            _this.ws.onopen = function () {
+                _this.ws.send(JSON.stringify({
+                    action: 'session.create',
+                    params: {},
+                }));
+                var heartTimer = setInterval(function () {
+                    _this.ws.send(JSON.stringify({
+                        action: 'heart.ping',
+                        params: {},
+                    }));
+                }, 30000);
+
+                $('.g-replybox').keydown(function (event) {
+                    if (event.keyCode == 13) {
+                        var content = $(this).text().trim();
+                        if (content.length != 0) {
+                            _this.ws.send(JSON.stringify({
+                                action: 'msg.send',
+                                params: {
+                                    content: content
+                                },
+                            }));
+                            $(this).empty();
+                        }
+                        return false;
+                    }
+                });
+            };
+
+            _this.ws.onmessage = function (evt) {
+                var res = JSON.parse(evt.data);
+                console.log(res);
+                switch (res.action) {
+                    default:
+                        break;
+                    case 'session.create':
+                        if (res.code != 0) {
+                            alert(res.msg);
+                        } else {
+                            _this.session = res.data;
+                            var r = _this.pushUser(res.data.fd, res.data.nickname);
+                            if (r) {
+                                _this.pushTips(res.data.nickname + ' 加入了群聊');
+                            }
+                        }
+                        break;
+                    case 'online.init':
+                        _this.msgboxDOM.empty();
+                        _this.onlineboxDom.empty();
+                        if (res.code == 0) {
+                            res.data.forEach(function (item, index) {
+                                _this.pushUser(item.fd, item.nickname);
+                            });
+                        }
+                        break;
+                    case 'session.close':
+                        if (res.code == 0) {
+                            var d = $('#online_' + res.data.fd);
+                            if (d.length) {
+                                _this.pushTips(d.find('.nickname').text() + ' 退出了群聊');
+                                d.remove();
+                            }
+                        }
+                        break;
+                    case 'msg.send':
+                        if (res.code == 0) {
+                            _this.pushMsg(res.data.nickname, res.data.content);
+                        }
+                        break;
+                }
+            };
+
+            _this.ws.onclose = function () {
+                // alert('服务已断开，点击确认重连');
+                setTimeout(function () {
+                    _this.init();
+                }, 1000);
+            };
+        }
+
+        this.pushMsg = function (nickname, msg) {
+            var t = new Date().getHours() + ':' + new Date().getSeconds();
+            var html = `<li class="type-msg"><span class="u-time">[${t}]</span> <span class="u-nickname">${nickname}：</span>${msg}</li>`;
+            this.msgboxDOM.append(html);
+            this.scrollDown();
+            return true;
+        }
+
+        this.pushTips = function (msg) {
+            var html = `<li class="type-tips"><span>${msg}</span></li>`;
+            this.msgboxDOM.append(html);
+            this.scrollDown();
+            return true;
+        }
+
+        this.scrollDown = function () {
+            $('.g-msgbox').scrollTop($('.g-msgbox')[0].scrollHeight);
+        }
+        this.pushUser = function (fd, nickname) {
+            if ($("#online_" + fd).length == 0) {
+                var html = `<li id="online_${fd}"><span>[${fd}]</span> <span class="nickname">${nickname}</span></li>`;
+                this.onlineboxDom.append(html);
+                return true;
+            } else {
+                return false;
+            }
+        }
+        this.init();
+    }
+    var o = new MostclanChat();
+</script>
+</body>
+</html>
